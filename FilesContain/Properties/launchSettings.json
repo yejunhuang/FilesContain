@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "FilesContain": {
+      "commandName": "Project",
+      "commandLineArgs": "fc -i \"C:\\MustDel\\bdisk-filenames.md5.txt\" -i \"C:\\MustDel\\DataAfter20190423Lock.md5.txt\" -o \"C:\\MustDel\\diff_hash_out.txt\""
+    }
+  }
+}
