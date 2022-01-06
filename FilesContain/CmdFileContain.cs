@@ -6,6 +6,30 @@ namespace CmdsNameSpace;
 
 public static partial class Cmds
 {
+    /// <summary>
+    /// 算法：
+    ///     1、读取一个或多个输入文件到List<HashFileNameRec>，按Hash升序排序。
+    ///     2、按Hash分组，每组记录下在List<HashFileNameRec>中的开始位置Start、数量Count，
+    ///         得到List<StartCountRec>。
+    ///     3、由List<HashFileNameRec>构造DictTree。
+    ///     4、由DictTree转换为可多线程查询的ImmuTreeList。
+    ///     5、过滤List<StartCountRec>中Count大于等于2的项，得Atleast2List。
+    ///     6、由Atleast2List构建List<SameHashAtleast2ImmuGroup>，它是Atleast2List中每个Hash在ImmuTree中节点的并集。
+    ///     6、从ImmuTree一级子节点开始，如某节点包含的Hash全在Atleast2List中，则记录下该节点；
+    ///         否则对子节点递归，递归函数有一布尔值记录父节点与子节点Hash数目是否相同，如相同直接递归到再下级子节点；
+    ///         最后，得到一个潜在非父包含节点集，其中无一节点为另一节点的父节点。
+    ///     7、遍历潜在非父包含节点集，按步骤8以下方法判断是否为非父包含。
+    ///         如某节点不为非父包含，则递归该节点子节点判断是否为非父包含。
+    ///         
+    ///     8、判断某节点是否为非父包含，找出该节点所有Hash，
+    ///         每个Hash在List<SameHashAtleast2ImmuGroup>的Group，计算并集；
+    ///         并减去该节点到根的中途节点；
+    ///         最后如非空则得到1个非父包含。
+    ///         
+    /// </summary>
+    /// <param name="inHashFiles"></param>
+    /// <param name="outFile"></param>
+    /// <param name="config"></param>
     public static void CmdFileContain(List<FileInfo> inHashFiles, FileInfo outFile, FileInfo config)
     {
         Console.WriteLine($"CmdFileContain, output file {outFile.FullName}");
