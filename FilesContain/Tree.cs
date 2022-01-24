@@ -16,8 +16,16 @@ public static partial class Cmds
         public Dictionary<string, DictTreeNode> Childs; //子节点，string为子节点路径，
         public ReaderWriterLockSlim ChildsLock;
 
-        //Childs.Count为0表示叶子节点
-        public int ToHashFileNameRecListIndex; //在List<HashFileNameRec>中索引
+        public DictTreeNode(string pathFromRoot)
+        {
+            this.PathFromRoot = pathFromRoot;
+            this.Childs = new Dictionary<string, DictTreeNode>();
+            this.ChildsLock = new ReaderWriterLockSlim();
+        }
+
+        //Childs.Count为0表示叶子节点，以下才有意义
+        public int StartCountListIdx; //在List<StartCountRec>中的索引
+        public int StartOffset; //StartCountRec中偏离Start的Offset
     }
 
     public record HashFileNameRec(byte[] hash, string filename) : IComparable<HashFileNameRec>
@@ -98,56 +106,66 @@ public static partial class Cmds
 
     public record GroupRec(byte[] Hash, List<int> ImmuTreeIdxGroup);
 
-    public static DictTreeNode DictTreeFromHashFileNameList(List<HashFileNameRec> l)
+    /// <summary>
+    /// 从startCountList、hashFileNameList生成DictTree。
+    /// DictTreeNode包含：
+    ///     PathFromRoot
+    ///     Childs
+    ///     StartCountListIdx为startCountList索引
+    ///     StartOffset为StartCountRec中偏离Start的Offset
+    /// 从DictTreeNode找到hashFileNameList索引方法：
+    ///     startCountList[StartCountListIdx].Start + StartOffset
+    /// </summary>
+    /// <param name="startCountList"></param>
+    /// <param name="hashFileNameList"></param>
+    /// <returns></returns>
+    public static DictTreeNode DictTreeFromStartCountList(List<StartCountRec> startCountList, List<HashFileNameRec> hashFileNameList)
     {
         //var Root = new FolderTree("", null);
-        var Root = new DictTreeNode()
+        var Root = new DictTreeNode("");
+        Parallel.ForEach(startCountList, (StartCountRec, _, StartCountListIdx) =>
         {
-            PathFromRoot = "",
-            Childs = new Dictionary<string, DictTreeNode>(),
-            ChildsLock = new ReaderWriterLockSlim()
-        };
-        Parallel.ForEach(l, (hashFileNameRec, _, ListIndex) =>
-        {
-            var paths = hashFileNameRec.filename.Split(Path.AltDirectorySeparatorChar); //分解全路径成若干子路径
-            var CurTree = Root; //从根往叶子走
-            for (int i = 1; i < paths.Length; i++)
+            Parallel.For(0, StartCountRec.Count, (StartOffset) =>
             {
-                DictTreeNode? NewChild; //将走到的新子树
+                var HashFileName = hashFileNameList[startCountList[(int)StartCountListIdx].Start + StartOffset];
+                var paths = HashFileName.filename.Split(Path.AltDirectorySeparatorChar); //分解全路径成若干子路径
 
-                //读当前树
-                CurTree.ChildsLock.EnterUpgradeableReadLock();
-                try
+                var CurTree = Root; //从根往叶子走
+                for (int i = 1; i < paths.Length; i++)
                 {
-                    //当前子路径paths[i]是否在子树中
-                    if (!CurTree.Childs.TryGetValue(paths[i], out NewChild))
-                    {
-                        //不存在，新增Child
-                        NewChild = new DictTreeNode()
-                        {
-                            PathFromRoot = CurTree.PathFromRoot + Path.AltDirectorySeparatorChar + paths[i],
-                            Childs = new Dictionary<string, DictTreeNode>(),
-                            ChildsLock = new ReaderWriterLockSlim()
-                        };
+                    DictTreeNode? NewChild; //将走到的新子树
 
-                        CurTree.ChildsLock.EnterWriteLock();
-                        try
+                    //读当前树
+                    CurTree.ChildsLock.EnterUpgradeableReadLock();
+                    try
+                    {
+                        //当前子路径paths[i]是否在子树中
+                        if (!CurTree.Childs.TryGetValue(paths[i], out NewChild))
                         {
-                            CurTree.Childs[paths[i]] = NewChild;
-                        }
-                        finally
-                        {
-                            CurTree.ChildsLock.ExitWriteLock();
+                            //不存在，新增Child
+                            NewChild = new DictTreeNode(CurTree.PathFromRoot + Path.AltDirectorySeparatorChar + paths[i]);
+
+                            CurTree.ChildsLock.EnterWriteLock();
+                            try
+                            {
+                                CurTree.Childs[paths[i]] = NewChild;
+                            }
+                            finally
+                            {
+                                CurTree.ChildsLock.ExitWriteLock();
+                            }
                         }
                     }
+                    finally
+                    {
+                        CurTree.ChildsLock.ExitUpgradeableReadLock();
+                    }
+                    CurTree = NewChild;
                 }
-                finally
-                {
-                    CurTree.ChildsLock.ExitUpgradeableReadLock();
-                }
-                CurTree = NewChild;
-            }
-            CurTree.ToHashFileNameRecListIndex = (int)ListIndex;
+                //Childs.Count为0表示叶子节点，以下才有意义
+                CurTree.StartCountListIdx = (int)StartCountListIdx;
+                CurTree.StartOffset = StartOffset;
+            });
         });
         return Root;
     }
@@ -172,16 +190,31 @@ public static partial class Cmds
         public int Parent; //父节点
         public ImmutableDictionary<string, int>? Childs; //子节点，string为子节点路径， int为子节点在List<TreeNode>索引
 
-        //Childs为null表示叶子节点
-        public int ToHashFileNameRecListIndex; //在List<HashFileNameRec>中索引
+        public SortedSet<byte[]> AtLeast2SameChildsHashes; //all childs hashes
 
-        public SortedSet<byte[]> ChildsHashes; //all childs hashes
+        //初始化Parent = -1，Childs = null，且StartCountListIdx、StartOffset无意义
+        public ImmutableTreeNode(string pathFromRoot)
+        {
+            this.PathFromRoot = pathFromRoot;
+
+            this.Parent = -1;
+            this.Childs = null;
+            this.AtLeast2SameChildsHashes = new SortedSet<byte[]>(BytesComparer.Default);
+            StartCountListIdx = -1;
+            StartOffset = -1;
+        }
+
+        //Childs为null表示叶子节点，以下才有意义
+        public int StartCountListIdx; //在List<StartCountRec>中的索引
+        public int StartOffset; //StartCountRec中偏离Start的Offset
     }
     //树用List<ImmutableTreeNode>表示，Parent、Childs用List的索引值表示。
     //另用List<int>存储，List<HashFileNameRec>对应位置指向List<ImmutableTreeNode>树叶子节点的索引。
 
     /// <summary>
     /// 从DictTree构建ImmuTree。
+    /// 后序遍历，先加入子节点，然后加入父节点，再把子节点指向父节点、父节点包含所有子节点。
+    /// 根节点的Parent为-1。
     /// 返回的List<ImmutableTreeNode>为树，树节点的Parent、Childs为List索引，指向List中其他树节点。
     /// 返回的List[Count-1]为根节点。
     /// 返回的另一List<int>为指针列表，可用来查找HashFileNameList第n项指向ImmuList哪项。
@@ -189,30 +222,26 @@ public static partial class Cmds
     /// <param name="r"></param>
     /// <param name="hashFileNameRecListCount"></param>
     /// <returns></returns>
-    public static async Task<(List<ImmutableTreeNode>, List<int>)> DictTreeToImmutableTree(DictTreeNode r, List<HashFileNameRec> HashFileNameList)
+    public static async Task<(List<ImmutableTreeNode>, List<int>)> DictTreeToImmutableTree(DictTreeNode r, List<HashFileNameRec> hashFileNameList, List<StartCountRec> startCountList)
     {
         List<ImmutableTreeNode> ImmuTreeList = new List<ImmutableTreeNode>();
 
         //HashFileNameList第j个元素对应ImmuList第HashFileNameListToImmuListIndexList[j]个元素
-        List<int> HashFileNameListToImmuListIndexList = new List<int>(HashFileNameList.Count);
-        for (int i = 0; i < HashFileNameList.Count; i++)
+        List<int> HashFileNameListToImmuListIndexList = new List<int>(hashFileNameList.Count);
+        for (int i = 0; i < hashFileNameList.Count; i++)
         {
-            HashFileNameListToImmuListIndexList.Add(-2);
+            HashFileNameListToImmuListIndexList.Add(-1);
         }
 
 
         object TreeListAndIndexListLock = new object(); //所有读写2个List的操作均lock此对象
 
+        //后序遍历根节点r
         await PostTaskWalkDictTree<KeyValuePair<string, int>>(r, (node, childsValue) =>
         {
-            var ImmuNode = new ImmutableTreeNode()
-            {
-                PathFromRoot = node.PathFromRoot,
-                Parent = -1,
-                Childs = null,
-                ToHashFileNameRecListIndex = 0,
-                ChildsHashes = new SortedSet<byte[]>(BytesComparer.Default)
-            };
+            //对于每个node节点处理其子节点信息childsValue，返回node节点信息
+            //childsValue每项为KeyValuePair<string, int>，为node节点的PathFromRoot和ImmuIndex
+            var ImmuNode = new ImmutableTreeNode(node.PathFromRoot);
             int ImmuIndex;
             lock (TreeListAndIndexListLock)
             {
@@ -220,7 +249,23 @@ public static partial class Cmds
                 ImmuIndex = ImmuTreeList.Count - 1;
             }
 
-            if (childsValue.Count > 0)
+            if (childsValue.Count == 0)
+            {
+                //叶子节点
+                ImmuNode.StartCountListIdx = node.StartCountListIdx;
+                ImmuNode.StartOffset = node.StartOffset;
+                var StartCount = startCountList[node.StartCountListIdx];
+                int HashFileNameListIdx = StartCount.Start + node.StartOffset;
+                lock (TreeListAndIndexListLock)
+                {
+                    HashFileNameListToImmuListIndexList[HashFileNameListIdx] = ImmuIndex;
+                }
+                if (StartCount.Count >= 2)
+                {
+                    ImmuNode.AtLeast2SameChildsHashes.Add(hashFileNameList[HashFileNameListIdx].hash);
+                }
+            }
+            else if (childsValue.Count > 0)
             {
                 //非叶子节点
 
@@ -240,19 +285,13 @@ public static partial class Cmds
                     ChildImmuNode.Parent = ImmuIndex;
 
                     //加入ChildsHashes
-                    ImmuNode.ChildsHashes.UnionWith(ChildImmuNode.ChildsHashes);
+                    ImmuNode.AtLeast2SameChildsHashes.UnionWith(ChildImmuNode.AtLeast2SameChildsHashes);
                 }
                 ImmuNode.Childs = Builder.ToImmutable();
             }
             else
             {
-                //叶子节点
-                ImmuNode.ToHashFileNameRecListIndex = node.ToHashFileNameRecListIndex;
-                lock (TreeListAndIndexListLock)
-                {
-                    HashFileNameListToImmuListIndexList[node.ToHashFileNameRecListIndex] = ImmuIndex;
-                }
-                ImmuNode.ChildsHashes.Add(HashFileNameList[node.ToHashFileNameRecListIndex].hash);
+                throw EX.New();
             }
 
             return new KeyValuePair<string, int>(Path.GetFileName(ImmuNode.PathFromRoot), ImmuIndex);
@@ -312,10 +351,27 @@ public static partial class Cmds
     }
 
 
+    public static async Task PreTaskWalkImmuTreeSuccessNotChild(List<ImmutableTreeNode> immuTreeList, int nodeIdx, Func<int, bool> f)
+    {
+        if (!f(nodeIdx))
+        {
+            var Childs = immuTreeList[nodeIdx].Childs;
+            if (null != Childs)
+            {
+                foreach (var item in Childs)
+                {
+                    await PreTaskWalkImmuTreeSuccessNotChild(immuTreeList, item.Value, f);
+                }
+            }
+        }
+    }
+
     class SameHashAtleast2ImmuGroup : IComparable<SameHashAtleast2ImmuGroup>
     {
         public byte[] Hash;
-        public List<int> ImmuTreeIdxList;
+        public List<int> ImmuTreeIdxList; //ImmuTree中包含该文件Hash的所有节点(除根)
+        public List<int> Childs; //与ImmuTreeIdxList等长一一对应，每项对应其所有子节点在ImmuTreeIdxList中索引
+        public List<int> RootChilds; //ImmuTree中包含该文件Hash的所有节点的根，包含的第一级子节点在ImmuTreeIdxList中索引
         public SameHashAtleast2ImmuGroup(byte[] hash, List<int> immuTreeIdxList)
         {
             this.Hash = hash;
@@ -357,6 +413,9 @@ public static partial class Cmds
                 //要求LeafToExclusiveRoot返回升序排序
                 GroupUnionList = GroupUnionList.Union(HashFileImmuIdxList);
             }
+            //利用List.BinarySearch()查找插入位置
+            //生成SameHashAtleast2ImmuGroup.Childs、RootChilds
+            //
             R.Add(new(StartCountItem.Hash, GroupUnionList));
         }
         return R;

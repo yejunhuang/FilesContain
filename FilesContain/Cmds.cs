@@ -7,15 +7,18 @@ using System.IO.Enumeration;
 
 using static System.Environment;
 using ShellProgressBar;
+using System.CommandLine.Parsing;
+using System.CommandLine.IO;
 
 namespace CmdsNameSpace;
 
 public static partial class Cmds
 {
-    public static void CmdRootRun()
+    public static void CmdRootRun(FileInfo inputMd5Filesname, FileInfo argument, FileInfo config)
     {
-        Console.WriteLine("root run");
-        Console.ReadLine();
+        //console.Out.WriteLine($"{parseResult}");
+        Console.WriteLine($"root run, inputNamesFile is {inputMd5Filesname}, argument is {argument}");
+        //Console.ReadLine();
     }
 
     public static void CmdGenFilesName(FileInfo folder, FileInfo outputFile, FileInfo config)

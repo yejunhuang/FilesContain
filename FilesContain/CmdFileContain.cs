@@ -54,10 +54,11 @@ public static partial class Cmds
         var StartCountList = MakeStartCountList(HashFileNameList);
         Console.WriteLine($"MakeStartCountList done. count={StartCountList.Count}");
 
-        var DictTree = DictTreeFromHashFileNameList(HashFileNameList);
+        //var DictTree = DictTreeFromHashFileNameList(HashFileNameList);
+        var DictTree = DictTreeFromStartCountList(StartCountList, HashFileNameList);
         Console.WriteLine("DictTree done.");
 
-        var (ImmuTreeList, IndexList) = DictTreeToImmutableTree(DictTree, HashFileNameList).Result;
+        var (ImmuTreeList, IndexList) = DictTreeToImmutableTree(DictTree, HashFileNameList, StartCountList).Result;
         Console.WriteLine($"DictTreeToImmutableTree done. count={ImmuTreeList.Count}");
 
         var ImmuGroupList = MakeImmuGroup(ImmuTreeList, StartCountList, IndexList);
@@ -117,7 +118,125 @@ public static partial class Cmds
                     List<int> IntersectionList = new List<int>();
                     bool bFirstInitIntersectionList = true;
                     bool bFindSigleHashFile = false;
-                    foreach (var hash in CurNode.ChildsHashes)
+                    foreach (var hash in CurNode.AtLeast2SameChildsHashes)
+                    {
+                        //查所属group
+                        FindRec.Hash = hash;
+                        var GroupIdx = groupList.BinarySearch(FindRec);
+                        if (GroupIdx < 0)
+                        {
+                            //不在AtLeast2里
+
+                            //应在StarCountRecList里
+                            //测试，以下两行可注释
+                            //int BinarySearchResult = startCountList.BinarySearch(new StartCountRec(hash, 0, 0));
+                            //if (BinarySearchResult < 0) throw EX.New();
+
+                            bFindSigleHashFile = true; //包含一个单一hash的元素，不可能非父包含
+                            break;
+                        }
+
+                        var GroupImmuTreeIdxList = groupList[GroupIdx].ImmuTreeIdxList;
+                        //Group.
+
+                        //建立交集
+                        if (bFirstInitIntersectionList)
+                        {
+                            bFirstInitIntersectionList = false;
+                            IntersectionList = GroupImmuTreeIdxList;
+                            //去除从叶子节点到根的节点
+                            IntersectionList = IntersectionList.Sub(LeafToExclusiveRootList);
+                            //只要交集中有一项减去LeafToExclusiveRootList，全部交集也减去LeafToExclusiveRootList
+                        }
+                        else
+                        {
+                            IntersectionList = IntersectionList.SortedIntersect(GroupImmuTreeIdxList);
+                        }
+                        if (IntersectionList.Count == 0) break;
+                    }
+                    if (!bFindSigleHashFile)
+                    {
+                        //如交集非空，交集节点集即非父包含当前节点
+                        if (IntersectionList.Count > 0)
+                        {
+                            //优化IntersectionList，去除重复父目录
+                            IntersectionList = RemoveImmuParent(IntersectionList, immuTreeList);
+
+                            //输出IntersectionList包含CurNode
+                            lock (OutWriter)
+                            {
+                                OutWriter.WriteLine($"{CurNode.PathFromRoot}");
+                                foreach (var item in IntersectionList)
+                                {
+                                    OutWriter.WriteLine($"  {immuTreeList[item].PathFromRoot}");
+                                }
+                                OutWriter.WriteLine();
+                            }
+                        }
+                    }
+                }
+
+            }
+            lock (progressBar)
+            {
+                progressBar.Tick();
+            }
+        });
+
+    }
+
+    /// <summary>
+    /// 遍历immuTreeList中(根除外)AtLeast2SameChildsHashes非0项，尝试做为被包含项，在其节点及子节点中找最顶层节点；
+    /// 对每一个尝试被包含项，遍历immuTreeList中AtLeast2SameChildsHashes非0项，找所有非父包含的最底层节点。
+    /// </summary>
+    /// <param name="startCountList"></param>
+    /// <param name="hashFileNameList"></param>
+    /// <param name="immuTreeList"></param>
+    /// <param name="hashFileNameListToImmuListIndexList"></param>
+    /// <param name="outFile"></param>
+    private static void NotParentContain2(
+        List<StartCountRec> startCountList,
+        List<HashFileNameRec> hashFileNameList,
+        List<ImmutableTreeNode> immuTreeList,
+        List<int> hashFileNameListToImmuListIndexList,
+        FileInfo outFile)
+    {
+        using var OutWriter = File.CreateText(outFile.FullName);
+        //outFile
+        //在group中找大于1的分组
+        List<StartCountRec> AtLeast2List = startCountList.Where((r) => r.Count > 1).ToList();
+        Console.WriteLine($"At least 2 Group count={AtLeast2List.Count}.");
+
+        using ProgressBar progressBar = new ProgressBar(AtLeast2List.Count, "NotParentContain progress");
+        Parallel.ForEach(AtLeast2List, (hashStartCount) =>
+        {
+            //对每一组做
+
+            var FindRec = new SameHashAtleast2ImmuGroup(new byte[0], new List<int>(0));
+
+            //对组内所有HashFileNameItem做
+            int HashFileNameIdx = hashStartCount.Start;
+            for (int i = 0; i < hashStartCount.Count; i++)
+            {
+                //对一个HashFileNameItem做
+                //HashFileNameIdx+i
+
+                //从叶子节点往上直到根，对每个节点做
+                //var LeafToExclusiveRootList = NodeToExclusiveRoot(indexList[HashFileNameIdx + i], immuTreeList);
+                var LeafToExclusiveRootList = ExclusiveNodeToExclusiveRoot(hashFileNameListToImmuListIndexList[HashFileNameIdx + i], immuTreeList);
+                //int ImmuRootIndex = immuTreeList.Count - 1;
+                foreach (var CurNodeIdx in LeafToExclusiveRootList)
+                {
+                    //当前节点
+                    var CurNode = immuTreeList[CurNodeIdx];
+
+                    //对当前节点包含Hash集的每项做
+
+                    //建立交集
+                    List<int> IntersectionList = new List<int>();
+                    bool bFirstInitIntersectionList = true;
+                    bool bFindSigleHashFile = false;
+                    foreach (var hash in CurNode.AtLeast2SameChildsHashes)
                     {
                         //查所属group
                         FindRec.Hash = hash;

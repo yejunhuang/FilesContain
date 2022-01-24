@@ -22,6 +22,17 @@ var longSynopsisText =
 
 var rootCommand = new RootCommand(longSynopsisText)
     {
+        new Option<FileInfo>
+        (
+            new string[] { "--input-md5-filesname", "-i" },
+            "input md5 files-name file"
+        ).ExistingOnly(),
+        new Argument<FileInfo>
+        (
+            "argument",
+            "filecontain folder"
+        ).ExistingOnly(),
+
         new Command("genfilesname", "gen all files name from a folder")
         {
             new Option<FileInfo>
@@ -117,7 +128,7 @@ var rootCommand = new RootCommand(longSynopsisText)
             ),
         }.SetAlias("fc").SetHandler(CommandHandler.Create(Cmds.CmdFileContain)),
 
-    };//.SetHandler(CommandHandler.Create(Cmds.CmdRootRun));
+    }.SetHandler(CommandHandler.Create(Cmds.CmdRootRun));
 
 
 var GlobalOption = new Option<FileInfo>(
