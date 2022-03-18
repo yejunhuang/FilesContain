@@ -13,18 +13,23 @@ public static partial class Cmds
     ///         得到List<StartCountRec>。
     ///     3、由List<HashFileNameRec>构造DictTree。
     ///     4、由DictTree转换为可多线程查询的ImmuTreeList。
-    ///     5、过滤List<StartCountRec>中Count大于等于2的项，得Atleast2List。
-    ///     6、由Atleast2List构建List<SameHashAtleast2ImmuGroup>，它是Atleast2List中每个Hash在ImmuTree中节点的并集。
-    ///     6、从ImmuTree一级子节点开始，如某节点包含的Hash全在Atleast2List中，则记录下该节点；
+    ///     5、构建HashParents。每个对应文件名数量大于等于2的Hash，都有一个所有文件名的父节点集合。
+    ///     6、构造潜在非父包含节点集--最上层Atleast2节点集(除根)，
+    ///         每个节点仅由Hash数量最少为2的叶子节点自下而上构成，
+    ///         且其中无一节点为另一节点的父节点。
+    ///         
+    ///     (将删除)6、从ImmuTree一级子节点开始，如某节点包含的Hash全在Atleast2List中，则记录下该节点(加到潜在节点集中)；
     ///         否则对子节点递归，递归函数有一布尔值记录父节点与子节点Hash数目是否相同，如相同直接递归到再下级子节点；
     ///         最后，得到一个潜在非父包含节点集，其中无一节点为另一节点的父节点。
-    ///     7、遍历潜在非父包含节点集，按步骤8以下方法判断是否为非父包含。
+    ///     7、遍历潜在非父包含节点集，按步骤7.1方法判断是否为非父包含。
     ///         如某节点不为非父包含，则递归该节点子节点判断是否为非父包含。
     ///         
-    ///     8、判断某节点是否为非父包含，找出该节点所有Hash，
-    ///         每个Hash在List<SameHashAtleast2ImmuGroup>的Group，计算并集；
-    ///         并减去该节点到根的中途节点；
-    ///         最后如非空则得到1个非父包含。
+    ///     7.1、判断某节点是否为非父包含。
+    ///             首先，找出该节点所有Hash；
+    ///                 每个Hash在HashParents中找到Parents集合；
+    ///             计算每个Hash的Parents并集；
+    ///             并减去该节点到根的中途节点；
+    ///             最后如非空则得到1个非父包含。
     ///         
     /// </summary>
     /// <param name="inHashFiles"></param>
@@ -61,11 +66,14 @@ public static partial class Cmds
         var (ImmuTreeList, IndexList) = DictTreeToImmutableTree(DictTree, HashFileNameList, StartCountList).Result;
         Console.WriteLine($"DictTreeToImmutableTree done. count={ImmuTreeList.Count}");
 
-        var ImmuGroupList = MakeImmuGroup(ImmuTreeList, StartCountList, IndexList);
-        Console.WriteLine($"MakeImmuGroup done. count={ImmuGroupList.Count}");
+        var HashParents = MakeHashParents(StartCountList, ImmuTreeList, IndexList);
+        var MostTopAtleast2 = MakeMostTopAtleast2(StartCountList, ImmuTreeList, IndexList);
+
+        //var ImmuGroupList = MakeImmuGroup(ImmuTreeList, StartCountList, IndexList);
+        //Console.WriteLine($"MakeImmuGroup done. count={ImmuGroupList.Count}");
 
         Console.WriteLine("NotParentContain begin...");
-        NotParentContain(ImmuGroupList, StartCountList, HashFileNameList, ImmuTreeList, IndexList, outFile);
+        NotParentContain(HashParents, MostTopAtleast2, StartCountList, HashFileNameList, ImmuTreeList, IndexList, outFile);
         Console.WriteLine("NotParentContain done.");
     }
     private static string FileNameConvert(string s, int i)
@@ -75,7 +83,64 @@ public static partial class Cmds
     }
 
 
+
+    /// <summary>
+    /// 遍历潜在非父包含节点集，如某节点不为非父包含，则递归该节点子节点判断是否为非父包含。
+    /// 
+    /// 判断某节点是否为非父包含：
+    ///     首先，找出该节点所有Hash；
+    ///         每个Hash在HashParents中找到Parents集合；
+    ///     计算每个Hash的Parents并集；
+    ///     并减去该节点到根的中途节点；
+    ///     最后如非空则得到1个非父包含。
+    /// </summary>
+    /// <param name="hashParents"></param>
+    /// <param name="mostTopAtleast2"></param>
+    /// <param name="startCountList"></param>
+    /// <param name="hashFileNameList"></param>
+    /// <param name="immuTreeList"></param>
+    /// <param name="hashFileNameListToImmuListIndexList"></param>
+    /// <param name="outFile"></param>
     private static void NotParentContain(
+        List<HashParents> hashParents,
+        List<int> mostTopAtleast2,
+        List<StartCountRec> startCountList,
+        List<HashFileNameRec> hashFileNameList,
+        List<ImmutableTreeNode> immuTreeList,
+        List<int> hashFileNameListToImmuListIndexList,
+        FileInfo outFile)
+    {
+        using var OutWriter = File.CreateText(outFile.FullName);
+
+        using ProgressBar progressBar = new ProgressBar(mostTopAtleast2.Count, "NotParentContain progress");
+        Parallel.ForEach(mostTopAtleast2, (mostTopNode) =>
+        {
+            //判断一个潜在的非父包含节点
+
+            lock (progressBar)
+            {
+                progressBar.Tick();
+            }
+        });
+
+    }
+
+    /// <summary>
+    /// 输出一个节点的全部非父包含
+    /// </summary>
+    /// <param name="node"></param>
+    /// <param name="hashParents"></param>
+    /// <param name="immuTreeList"></param>
+    private static List<int> NotParentContainNode(
+        int node,
+        List<HashParents> hashParents,
+        List<ImmutableTreeNode> immuTreeList)
+    {
+        var Result = new List<int>();
+        return Result;
+    }
+
+    private static void NotParentContain2(
         List<SameHashAtleast2ImmuGroup> groupList,
         List<StartCountRec> startCountList,
         List<HashFileNameRec> hashFileNameList,
@@ -145,12 +210,12 @@ public static partial class Cmds
                             bFirstInitIntersectionList = false;
                             IntersectionList = GroupImmuTreeIdxList;
                             //去除从叶子节点到根的节点
-                            IntersectionList = IntersectionList.Sub(LeafToExclusiveRootList);
+                            IntersectionList = IntersectionList.SetSub(LeafToExclusiveRootList);
                             //只要交集中有一项减去LeafToExclusiveRootList，全部交集也减去LeafToExclusiveRootList
                         }
                         else
                         {
-                            IntersectionList = IntersectionList.SortedIntersect(GroupImmuTreeIdxList);
+                            IntersectionList = IntersectionList.SetIntersect(GroupImmuTreeIdxList);
                         }
                         if (IntersectionList.Count == 0) break;
                     }
@@ -185,121 +250,4 @@ public static partial class Cmds
 
     }
 
-    /// <summary>
-    /// 遍历immuTreeList中(根除外)AtLeast2SameChildsHashes非0项，尝试做为被包含项，在其节点及子节点中找最顶层节点；
-    /// 对每一个尝试被包含项，遍历immuTreeList中AtLeast2SameChildsHashes非0项，找所有非父包含的最底层节点。
-    /// </summary>
-    /// <param name="startCountList"></param>
-    /// <param name="hashFileNameList"></param>
-    /// <param name="immuTreeList"></param>
-    /// <param name="hashFileNameListToImmuListIndexList"></param>
-    /// <param name="outFile"></param>
-    private static void NotParentContain2(
-        List<StartCountRec> startCountList,
-        List<HashFileNameRec> hashFileNameList,
-        List<ImmutableTreeNode> immuTreeList,
-        List<int> hashFileNameListToImmuListIndexList,
-        FileInfo outFile)
-    {
-        using var OutWriter = File.CreateText(outFile.FullName);
-        //outFile
-        //在group中找大于1的分组
-        List<StartCountRec> AtLeast2List = startCountList.Where((r) => r.Count > 1).ToList();
-        Console.WriteLine($"At least 2 Group count={AtLeast2List.Count}.");
-
-        using ProgressBar progressBar = new ProgressBar(AtLeast2List.Count, "NotParentContain progress");
-        Parallel.ForEach(AtLeast2List, (hashStartCount) =>
-        {
-            //对每一组做
-
-            var FindRec = new SameHashAtleast2ImmuGroup(new byte[0], new List<int>(0));
-
-            //对组内所有HashFileNameItem做
-            int HashFileNameIdx = hashStartCount.Start;
-            for (int i = 0; i < hashStartCount.Count; i++)
-            {
-                //对一个HashFileNameItem做
-                //HashFileNameIdx+i
-
-                //从叶子节点往上直到根，对每个节点做
-                //var LeafToExclusiveRootList = NodeToExclusiveRoot(indexList[HashFileNameIdx + i], immuTreeList);
-                var LeafToExclusiveRootList = ExclusiveNodeToExclusiveRoot(hashFileNameListToImmuListIndexList[HashFileNameIdx + i], immuTreeList);
-                //int ImmuRootIndex = immuTreeList.Count - 1;
-                foreach (var CurNodeIdx in LeafToExclusiveRootList)
-                {
-                    //当前节点
-                    var CurNode = immuTreeList[CurNodeIdx];
-
-                    //对当前节点包含Hash集的每项做
-
-                    //建立交集
-                    List<int> IntersectionList = new List<int>();
-                    bool bFirstInitIntersectionList = true;
-                    bool bFindSigleHashFile = false;
-                    foreach (var hash in CurNode.AtLeast2SameChildsHashes)
-                    {
-                        //查所属group
-                        FindRec.Hash = hash;
-                        var GroupIdx = groupList.BinarySearch(FindRec);
-                        if (GroupIdx < 0)
-                        {
-                            //不在AtLeast2里
-
-                            //应在StarCountRecList里
-                            //测试，以下两行可注释
-                            //int BinarySearchResult = startCountList.BinarySearch(new StartCountRec(hash, 0, 0));
-                            //if (BinarySearchResult < 0) throw EX.New();
-
-                            bFindSigleHashFile = true; //包含一个单一hash的元素，不可能非父包含
-                            break;
-                        }
-
-                        var GroupImmuTreeIdxList = groupList[GroupIdx].ImmuTreeIdxList;
-                        //Group.
-
-                        //建立交集
-                        if (bFirstInitIntersectionList)
-                        {
-                            bFirstInitIntersectionList = false;
-                            IntersectionList = GroupImmuTreeIdxList;
-                            //去除从叶子节点到根的节点
-                            IntersectionList = IntersectionList.Sub(LeafToExclusiveRootList);
-                            //只要交集中有一项减去LeafToExclusiveRootList，全部交集也减去LeafToExclusiveRootList
-                        }
-                        else
-                        {
-                            IntersectionList = IntersectionList.SortedIntersect(GroupImmuTreeIdxList);
-                        }
-                        if (IntersectionList.Count == 0) break;
-                    }
-                    if (!bFindSigleHashFile)
-                    {
-                        //如交集非空，交集节点集即非父包含当前节点
-                        if (IntersectionList.Count > 0)
-                        {
-                            //优化IntersectionList，去除重复父目录
-                            IntersectionList = RemoveImmuParent(IntersectionList, immuTreeList);
-
-                            //输出IntersectionList包含CurNode
-                            lock (OutWriter)
-                            {
-                                OutWriter.WriteLine($"{CurNode.PathFromRoot}");
-                                foreach (var item in IntersectionList)
-                                {
-                                    OutWriter.WriteLine($"  {immuTreeList[item].PathFromRoot}");
-                                }
-                                OutWriter.WriteLine();
-                            }
-                        }
-                    }
-                }
-
-            }
-            lock (progressBar)
-            {
-                progressBar.Tick();
-            }
-        });
-
-    }
 }

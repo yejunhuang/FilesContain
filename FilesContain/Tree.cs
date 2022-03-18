@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 
 namespace CmdsNameSpace;
 
@@ -11,7 +12,7 @@ public static partial class Cmds
     /// </summary>
     public class DictTreeNode
     {
-        public string PathFromRoot; //从根节点到当前节点的路径，如./a/b/c
+        public string PathFromRoot; //从根节点到当前节点的路径，形如"/a/b/c"
         //public ConcurrentDictionary<string, ConcurrentTreeNode> Childs; //子节点，string为子节点路径，
         public Dictionary<string, DictTreeNode> Childs; //子节点，string为子节点路径，
         public ReaderWriterLockSlim ChildsLock;
@@ -28,6 +29,11 @@ public static partial class Cmds
         public int StartOffset; //StartCountRec中偏离Start的Offset
     }
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="hash"></param>
+    /// <param name="filename">形如 "/a/b/c"</param>
     public record HashFileNameRec(byte[] hash, string filename) : IComparable<HashFileNameRec>
     {
         public int CompareTo(HashFileNameRec? other)
@@ -92,7 +98,7 @@ public static partial class Cmds
         int Cur = 0;
         while (Cur < l.Count)
         {
-            //Start指向当前hash值
+            //Cur指向当前hash值
             int Next = Cur + 1;
             //找相同hash值，直到结束或不同
             while ((Next < l.Count) && (Comparer<HashFileNameRec>.Default.Compare(l[Cur], l[Next]) == 0)) Next++;
@@ -108,6 +114,11 @@ public static partial class Cmds
 
     /// <summary>
     /// 从startCountList、hashFileNameList生成DictTree。
+    /// 对不同hash值的每一个hash值并行做
+    ///     对相同hash值的不同FileName并行做
+    ///         把FileName按"/"分割成路径列表，从根到叶子，
+    ///         尝试打开读锁进入子节点（如失败则打开写锁进入子节点并新增子节点）。
+    ///         在叶子节点保存跳到HashFileNameRec的方法。
     /// DictTreeNode包含：
     ///     PathFromRoot
     ///     Childs
@@ -129,6 +140,8 @@ public static partial class Cmds
             {
                 var HashFileName = hashFileNameList[startCountList[(int)StartCountListIdx].Start + StartOffset];
                 var paths = HashFileName.filename.Split(Path.AltDirectorySeparatorChar); //分解全路径成若干子路径
+                //HashFileName形如"/child1/child2/child3"，最前面为"/"
+                //paths[1]为"child1"
 
                 var CurTree = Root; //从根往叶子走
                 for (int i = 1; i < paths.Length; i++)
@@ -186,7 +199,7 @@ public static partial class Cmds
     /// </summary>
     public class ImmutableTreeNode
     {
-        public string PathFromRoot; //从根节点到当前节点的路径，如./a/b/c
+        public string PathFromRoot; //从根节点到当前节点的路径，形如"/a/b/c"
         public int Parent; //父节点
         public ImmutableDictionary<string, int>? Childs; //子节点，string为子节点路径， int为子节点在List<TreeNode>索引
 
@@ -214,10 +227,9 @@ public static partial class Cmds
     /// <summary>
     /// 从DictTree构建ImmuTree。
     /// 后序遍历，先加入子节点，然后加入父节点，再把子节点指向父节点、父节点包含所有子节点。
-    /// 根节点的Parent为-1。
+    /// 返回的List[Count-1]为根节点，根节点的Parent为-1。
     /// 返回的List<ImmutableTreeNode>为树，树节点的Parent、Childs为List索引，指向List中其他树节点。
-    /// 返回的List[Count-1]为根节点。
-    /// 返回的另一List<int>为指针列表，可用来查找HashFileNameList第n项指向ImmuList哪项。
+    /// 返回的另一List<int>为跳转指针列表，可从HashFileNameList第i项跳到ImmuList的第List<int>[i]项。
     /// </summary>
     /// <param name="r"></param>
     /// <param name="hashFileNameRecListCount"></param>
@@ -239,12 +251,14 @@ public static partial class Cmds
         //后序遍历根节点r
         await PostTaskWalkDictTree<KeyValuePair<string, int>>(r, (node, childsValue) =>
         {
-            //对于每个node节点处理其子节点信息childsValue，返回node节点信息
-            //childsValue每项为KeyValuePair<string, int>，为node节点的PathFromRoot和ImmuIndex
+            //对于每个node节点，处理所有子节点对应的泛型childsValue，返回node节点对应的泛型Value。
+            //泛型childsValue每项为KeyValuePair<string, int>，为子节点路径和ImmuIndex
+            //由于后序遍历，此时node的所有子节点已加入Immu树中
             var ImmuNode = new ImmutableTreeNode(node.PathFromRoot);
             int ImmuIndex;
             lock (TreeListAndIndexListLock)
             {
+                //向树添加ImmuNode并取得树中索引
                 ImmuTreeList.Add(ImmuNode);
                 ImmuIndex = ImmuTreeList.Count - 1;
             }
@@ -294,6 +308,7 @@ public static partial class Cmds
                 throw EX.New();
             }
 
+            //ImmuNode.PathFromRoot形如"/aa/bb/cc"，取<"cc", ImmuIndex>返回给父节点
             return new KeyValuePair<string, int>(Path.GetFileName(ImmuNode.PathFromRoot), ImmuIndex);
         });
         return (ImmuTreeList, HashFileNameListToImmuListIndexList);
@@ -301,12 +316,12 @@ public static partial class Cmds
 
     /// <summary>
     /// 后序Task遍历每个节点
-    /// 从子节点提取ChildValue
-    /// 多个子节点的ChildValue合并成1个ChildsValue返回
+    /// 从子节点提取包含的泛型ChildValue
+    /// 多个子节点的泛型ChildValue合并成1个当前节点的泛型ChildsValue返回
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="n"></param>
-    /// <param name="a">多个子节点ChildValue合并成1个ChildsValue返回的函数</param>
+    /// <param name="a">从多个子节点ChildValue、当前节点，合并成当前节点对应的泛型Value返回的函数</param>
     /// <returns>1个ChildValue</returns>
     public static async Task<T> PostTaskWalkDictTree<T>(DictTreeNode n, Func<DictTreeNode, List<T>, T> a)
     {
@@ -356,15 +371,254 @@ public static partial class Cmds
         if (!f(nodeIdx))
         {
             var Childs = immuTreeList[nodeIdx].Childs;
-            if (null != Childs)
+            foreach (var item in Childs.EmptyIfNull())
             {
-                foreach (var item in Childs)
-                {
-                    await PreTaskWalkImmuTreeSuccessNotChild(immuTreeList, item.Value, f);
-                }
+                await PreTaskWalkImmuTreeSuccessNotChild(immuTreeList, item.Value, f);
             }
         }
     }
+
+    /// <summary>
+    /// 每个Hash对应一组文件名列表，即ImmuTree中叶子节点列表；
+    /// 叶子节点列表及其所有父节点，构成Hash父节点列表(除根)。
+    /// 按升序排列。
+    /// </summary>
+    class HashParents
+    {
+        public byte[] Hash;
+        public List<int> ParentIdxList; //ImmuTree中，该Hash对应文件列表的所有父节点列表(除根)，按升序排序
+    }
+
+    /// <summary>
+    /// 构造HashParents列表(除根)。
+    /// 对每个Hash，如对应文件名数量大于等于2，则构造HashParents。
+    /// 
+    /// 取得Hash对应文件列表对应的Immu树叶子节点列表，作为当前列表集合，初始结果集为空。
+    /// 循环，如当前列表集合非空：
+    ///     当前列表集合并入结果集；
+    ///     当前列表集合 = 当前列表集合的上一级父节点列表集合(除根)；
+    /// 结果集排升序返回。
+    /// </summary>
+    /// <param name="startCountList"></param>
+    /// <param name="immuTreeList"></param>
+    /// <param name="hashFileNameListToImmuListIndexList"></param>
+    /// <returns></returns>
+    static List<HashParents> MakeHashParents(
+        List<StartCountRec> startCountList,
+        List<ImmutableTreeNode> immuTreeList,
+        List<int> hashFileNameListToImmuListIndexList)
+    {
+        var R = new List<HashParents>();
+        var AtLeastTwo = startCountList.Where((i) => (i.Count >= 2));
+        //得到Hash对应文件名数量大于等于2的组
+
+        //对AtLeastTwo的所有组做
+        foreach (var StartCountItem in AtLeastTwo)
+        {
+            //对一组的所有文件名做
+            int Cur = StartCountItem.Start;
+            var CurSet = new List<int>(); //当前列表集合
+            for (int i = 0; i < StartCountItem.Count; i++)
+            {
+                //文件名索引 Cur+i
+                //ImmuTree索引
+                var LeafIdx = hashFileNameListToImmuListIndexList[Cur + i];
+                CurSet.Add(LeafIdx);
+            }
+            CurSet.Sort(); //默认升序排序
+            var ResultSet = new List<int>(); //结果列表集合
+            while (CurSet.Count > 0)
+            {
+                //当前列表集合并入结果集；
+                ResultSet.SetUnion(CurSet); //升序排序
+
+                //当前列表集合 = 当前列表集合的上一级父节点列表集合(除根)；
+                var ParentSet = new List<int>();
+                foreach (int i in CurSet)
+                {
+                    var Parent = immuTreeList[i].Parent;
+                    if (GetImmuTreeRootIndex(immuTreeList) == Parent) continue; //如果是根，忽略
+
+                    ParentSet.SetUnionOne(Parent); //把父节点并入父节点集合
+                }
+                CurSet = ParentSet;
+            }
+
+            //var TTT = new HashParents() { Hash = StartCountItem.Hash};
+            //var TTT = new HashParents() { StartCountItem.Hash, ResultSet };
+            R.Add(new HashParents() { Hash = StartCountItem.Hash, ParentIdxList = ResultSet });
+
+        }
+        return R;
+    }
+
+
+
+    /// <summary>
+    /// 构造潜在非父包含节点集--最上层Atleast2节点集(除根)，每个节点仅由Hash数量最少为2的叶子节点自下而上构成，
+    /// 且其中无一节点为另一节点的父节点。
+    /// 
+    /// 从Atleast2叶子节点集开始，自底向上，查找最上层Atleast2节点集(MostTopAtleast2NodeSet)。
+    /// MostTopAtleast2NodeSet 置为 空。
+    /// 所有Atleast2节点集(AllAtleast2NodeSet)、当前层节点集(CurLevelNodeSet) 置为 Atleast2叶子节点集。
+    /// while(CurLevelNodeSet非空)
+    /// {
+    ///     ParentLevelNodeSet = 空
+    ///     foreach(CurNode in CurLevelNodeSet)
+    ///     {
+    ///         如 CurNode为根 则 continue
+    ///         ParentNode = CurNode.Parent
+    ///         如 ParentNode in AllAtleast2NodeSet 则 continue
+    ///         如 ParentNode的每个子节点 in AllAtleast2NodeSet 那么
+    ///             ParentLevelNodeSet += ParentNode
+    ///             AllAtleast2NodeSet += ParentNode
+    ///         else
+    ///             MostTopAtleast2NodeSet += CurNode
+    ///     }
+    ///     CurLevelNodeSet = ParentLevelNodeSet
+    /// }
+    /// 
+    /// </summary>
+    /// <param name="startCountList"></param>
+    /// <param name="immuTreeList"></param>
+    /// <param name="hashFileNameListToImmuListIndexList"></param>
+    /// <returns></returns>
+    /// <exception cref="NotImplementedException"></exception>
+    static List<int> MakeMostTopAtleast2(
+        List<StartCountRec> startCountList,
+        List<ImmutableTreeNode> immuTreeList,
+        List<int> hashFileNameListToImmuListIndexList)
+    {
+        var MostTopAtleast2NodeSet = new List<int>();
+        var AtLeastTwoStartCount = startCountList.Where((i) => (i.Count >= 2));
+        var CurLevelNodeSet = new List<int>();
+        foreach (var StartCountItem in AtLeastTwoStartCount)
+        {
+            //对一组的所有文件名做
+            int Cur = StartCountItem.Start;
+            for (int i = 0; i < StartCountItem.Count; i++)
+            {
+                //文件名索引 Cur+i
+                //ImmuTree索引
+                var LeafIdx = hashFileNameListToImmuListIndexList[Cur + i];
+                CurLevelNodeSet.Add(LeafIdx);
+            }
+        }
+        CurLevelNodeSet.Sort(); //默认升序排序
+        var AllAtleast2NodeSet = new List<int>(CurLevelNodeSet);
+
+        var RootIndex = GetImmuTreeRootIndex(immuTreeList);
+        while (CurLevelNodeSet.Count > 0)
+        {
+            var ParentLevelNodeSet = new List<int>();
+            foreach (var CurNode in CurLevelNodeSet)
+            {
+                if (CurNode == RootIndex) continue;
+                var ParentNode = immuTreeList[CurNode].Parent;
+                if (AllAtleast2NodeSet.SetContain(ParentNode)) continue;
+
+                bool AllChildInAllAtleast2NodeSet = true;
+                foreach (var ChildNodeItem in immuTreeList[ParentNode].Childs.EmptyIfNull())
+                {
+                    if (!AllAtleast2NodeSet.SetContain(ChildNodeItem.Value))
+                    {
+                        AllChildInAllAtleast2NodeSet = false;
+                        break;
+                    }
+                }
+                if (AllChildInAllAtleast2NodeSet)
+                {
+                    ParentLevelNodeSet.SetUnionOne(ParentNode);
+                    AllAtleast2NodeSet.SetUnionOne(ParentNode);
+                }
+                else
+                {
+                    MostTopAtleast2NodeSet.SetUnionOne(CurNode);
+                }
+            }
+            CurLevelNodeSet = ParentLevelNodeSet;
+        }
+        return MostTopAtleast2NodeSet;
+    }
+
+    /// <summary>
+    /// 构造潜在非父包含节点集--最上层Atleast2节点集(除根)，每个节点仅由Hash数量最少为2的叶子节点自下而上构成，
+    /// 且其中无一节点为另一节点的父节点。
+    /// 
+    /// 纯2节点定义：如某节点为叶子节点，则其相同Hash数量最少为2；如某节点非叶子节点，则其子节点均为纯2节点。
+    /// 非2节点定义：不是纯2节点。如某节点为叶子节点，则其相同Hash数量为1；如某节点非叶子节点，则其子节点至少含有1个非2节点。
+    /// 
+    /// 后序遍历树(含根)：
+    ///     如当前节点的子节点包含非2节点，则向输出列表添加全部纯2子节点，当前节点标记为非2节点；
+    ///     否则，当前节点标记为纯2节点。
+    /// 
+    /// </summary>
+    /// <param name="startCountList"></param>
+    /// <param name="immuTreeList"></param>
+    /// <param name="hashFileNameListToImmuListIndexList"></param>
+    /// <returns></returns>
+    /// <exception cref="NotImplementedException"></exception>
+    static List<int> MakeMostTopAtleast22(
+        List<StartCountRec> startCountList,
+        List<ImmutableTreeNode> immuTreeList,
+        List<int> hashFileNameListToImmuListIndexList)
+    {
+        var MostTopAtleast2NodeSet = new List<int>();
+        var AtLeastTwoStartCount = startCountList.Where((i) => (i.Count >= 2));
+        var CurLevelNodeSet = new List<int>();
+        foreach (var StartCountItem in AtLeastTwoStartCount)
+        {
+            //对一组的所有文件名做
+            int Cur = StartCountItem.Start;
+            for (int i = 0; i < StartCountItem.Count; i++)
+            {
+                //文件名索引 Cur+i
+                //ImmuTree索引
+                var LeafIdx = hashFileNameListToImmuListIndexList[Cur + i];
+                CurLevelNodeSet.Add(LeafIdx);
+            }
+        }
+        CurLevelNodeSet.Sort(); //默认升序排序
+        var AllAtleast2NodeSet = new List<int>(CurLevelNodeSet);
+
+        var RootIndex = GetImmuTreeRootIndex(immuTreeList);
+        while (CurLevelNodeSet.Count > 0)
+        {
+            var ParentLevelNodeSet = new List<int>();
+            foreach (var CurNode in CurLevelNodeSet)
+            {
+                if (CurNode == RootIndex) continue;
+                var ParentNode = immuTreeList[CurNode].Parent;
+                if (AllAtleast2NodeSet.SetContain(ParentNode)) continue;
+
+                bool AllChildInAllAtleast2NodeSet = true;
+                foreach (var ChildNodeItem in immuTreeList[ParentNode].Childs.EmptyIfNull())
+                {
+                    if (!AllAtleast2NodeSet.SetContain(ChildNodeItem.Value))
+                    {
+                        AllChildInAllAtleast2NodeSet = false;
+                        break;
+                    }
+                }
+                if (AllChildInAllAtleast2NodeSet)
+                {
+                    ParentLevelNodeSet.SetUnionOne(ParentNode);
+                    AllAtleast2NodeSet.SetUnionOne(ParentNode);
+                }
+                else
+                {
+                    MostTopAtleast2NodeSet.SetUnionOne(CurNode);
+                }
+            }
+            CurLevelNodeSet = ParentLevelNodeSet;
+        }
+        return MostTopAtleast2NodeSet;
+    }
+
+
+    public static IEnumerable<T> EmptyIfNull<T>(this IEnumerable<T>? nullableenumerable) =>
+        nullableenumerable ?? Enumerable.Empty<T>();
+
 
     class SameHashAtleast2ImmuGroup : IComparable<SameHashAtleast2ImmuGroup>
     {
@@ -411,7 +665,7 @@ public static partial class Cmds
                 var LeafIdx = HashFileNameToImmuTreeIdxList[Cur + i];
                 var HashFileImmuIdxList = NodeToExclusiveRoot(LeafIdx, immuTreeList);
                 //要求LeafToExclusiveRoot返回升序排序
-                GroupUnionList = GroupUnionList.Union(HashFileImmuIdxList);
+                GroupUnionList = GroupUnionList.SetUnion(HashFileImmuIdxList);
             }
             //利用List.BinarySearch()查找插入位置
             //生成SameHashAtleast2ImmuGroup.Childs、RootChilds
@@ -471,7 +725,7 @@ public static partial class Cmds
         var R = immuIdxList;
         for (int i = 0; i < immuIdxList.Count; i++)
         {
-            R = R.Sub(ExclusiveNodeToExclusiveRoot(immuIdxList[i], immuTreeList));
+            R = R.SetSub(ExclusiveNodeToExclusiveRoot(immuIdxList[i], immuTreeList));
         }
         return R;
     }
@@ -499,7 +753,7 @@ public static partial class Cmds
     /// <param name="one"></param>
     /// <param name="two"></param>
     /// <returns></returns>
-    private static List<T> SortedIntersect<T>(this List<T> one, List<T> two)
+    private static List<T> SetIntersect<T>(this List<T> one, List<T> two)
     {
         var R = new List<T>();
         int OneIndex = 0;
@@ -540,7 +794,7 @@ public static partial class Cmds
     /// <param name="minuend"></param>
     /// <param name="subtrahend"></param>
     /// <returns></returns>
-    public static List<T> Sub<T>(this List<T> minuend, List<T> subtrahend)
+    public static List<T> SetSub<T>(this List<T> minuend, List<T> subtrahend)
     {
         int MinIndex = 0;
         int SubIndex = 0;
@@ -576,13 +830,65 @@ public static partial class Cmds
     }
 
     /// <summary>
+    /// 从已升序排序的被减数minuend中减去已升序排序的减数subtrahend，返回已升序排序的差。
+    /// 算法：
+    ///     
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <param name="minuend"></param>
+    /// <param name="subtrahend"></param>
+    /// <returns></returns>
+    /// <exception cref="NotImplementedException"></exception>
+    public static List<T> SetQuickSub<T>(this List<T> minuend, List<T> subtrahend)
+    {
+        int MinIndex = 0;
+        int SubIndex = 0;
+        var R = new List<T>();
+        while ((MinIndex < minuend.Count) && (SubIndex < subtrahend.Count))
+        {
+            //var MinValue = minuend[MinIndex];
+            var SubValue = subtrahend[SubIndex];
+
+            var i = minuend.BinarySearch(MinIndex, minuend.Count - MinIndex, SubValue, Comparer<T>.Default);
+            if (i >= 0)
+            {
+                //找到的位置，把列表分为左右两部分
+                //R.AddRange(minuend.GetRange(MinIndex, i - MinIndex));
+                R.AddRange(minuend.EnumRange(MinIndex, i - MinIndex));
+                MinIndex = i + 1;
+                SubIndex++;
+            }
+            else
+                break; //没找到，剩下的subtrahend也不用找了
+
+        }
+        if (MinIndex < minuend.Count)
+        {
+            //两种情况，一、subtrahend已找完且minuend还有；二、某个SubValue没找到且minuend还有
+            //R.AddRange(minuend.GetRange(MinIndex, minuend.Count-MinIndex));
+            R.AddRange(minuend.EnumRange(MinIndex, minuend.Count - MinIndex));
+        }
+
+        return R;
+    }
+
+    public static IEnumerable<T> EnumRange<T>(this List<T> l, int start, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            yield return l[start];
+            start++;
+        }
+    }
+
+    /// <summary>
     /// 从升序排序的两个List(每个List不含重复元素)，返回升序排序的并集。
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="one"></param>
     /// <param name="two"></param>
     /// <returns></returns>
-    public static List<T> Union<T>(this List<T> one, List<T> two)
+    public static List<T> SetUnion<T>(this List<T> one, List<T> two)
     {
         var R = new List<T>();
         int OneIndex = 0;
@@ -627,4 +933,43 @@ public static partial class Cmds
 
         return R;
     }
+
+
+    /// <summary>
+    /// 向升序排序的泛型List集合，添加泛型元素。
+    /// 如集合中已存在该元素，则忽略。
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    /// <param name="l"></param>
+    /// <param name="one"></param>
+    /// <returns></returns>
+    public static void SetUnionOne<T>(this List<T> l, T one)
+    {
+        var i = l.BinarySearch(one);
+        if (i < 0)
+        {
+            //没找到
+            l.Insert(~i, one);
+        }
+    }
+
+    /// <summary>
+    /// 升序排序的泛型List集合是否包含元素。
+    /// </summary>
+    /// <typeparam name="T">泛型</typeparam>
+    /// <param name="l">集合</param>
+    /// <param name="e">元素</param>
+    /// <returns></returns>
+    public static bool SetContain<T>(this List<T> l, T e)
+    {
+        var i = l.BinarySearch(e);
+        if (i < 0)
+        {
+            //没找到
+            return false;
+        }
+        else
+            return true;
+    }
+
 }
