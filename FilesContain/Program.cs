@@ -8,6 +8,12 @@ using CmdsNameSpace;
 
 // See https://aka.ms/new-console-template for more information
 
+int workerThreads;
+ThreadPool.GetMinThreads(out workerThreads, out _);
+//ThreadPool.GetMaxThreads(out workerThreads, out _);
+Console.WriteLine(workerThreads.ToString());
+return 0;
+
 var longSynopsisText =
     $"在一个文件系统中，如何找到并删除所有多余文件夹而文件不丢失？{NewLine}" +
     $"两个文件二进制相同，指两个文件可能文件名、创建修改时间不同，但内容每一bit相同。{NewLine}" +

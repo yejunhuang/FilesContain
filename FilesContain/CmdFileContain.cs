@@ -35,7 +35,7 @@ public static partial class Cmds
     /// <param name="inHashFiles"></param>
     /// <param name="outFile"></param>
     /// <param name="config"></param>
-    public static void CmdFileContain(List<FileInfo> inHashFiles, FileInfo outFile, FileInfo config)
+    public static async void CmdFileContain(List<FileInfo> inHashFiles, FileInfo outFile, FileInfo config)
     {
         Console.WriteLine($"CmdFileContain, output file {outFile.FullName}");
         List<HashFileNameRec> HashFileNameList = new List<HashFileNameRec>();
@@ -63,17 +63,17 @@ public static partial class Cmds
         var DictTree = DictTreeFromStartCountList(StartCountList, HashFileNameList);
         Console.WriteLine("DictTree done.");
 
-        var (ImmuTreeList, IndexList) = DictTreeToImmutableTree(DictTree, HashFileNameList, StartCountList).Result;
-        Console.WriteLine($"DictTreeToImmutableTree done. count={ImmuTreeList.Count}");
+        var (ListTree, IndexList) = DictTreeToListTree(DictTree, HashFileNameList, StartCountList).Result;
+        Console.WriteLine($"DictTreeToImmutableTree done. count={ListTree.Count}");
 
-        var HashParents = MakeHashParents(StartCountList, ImmuTreeList, IndexList);
-        var MostTopAtleast2 = MakeMostTopAtleast2(StartCountList, ImmuTreeList, IndexList);
+        var HashParents = MakeHashParents(StartCountList, ListTree, IndexList);
+        var MostTopAtleast2 = MakeMostTopAtleast2(HashParents, StartCountList, ListTree, IndexList).Result;
 
         //var ImmuGroupList = MakeImmuGroup(ImmuTreeList, StartCountList, IndexList);
         //Console.WriteLine($"MakeImmuGroup done. count={ImmuGroupList.Count}");
 
         Console.WriteLine("NotParentContain begin...");
-        NotParentContain(HashParents, MostTopAtleast2, StartCountList, HashFileNameList, ImmuTreeList, IndexList, outFile);
+        NotParentContain(HashParents, MostTopAtleast2, StartCountList, HashFileNameList, ListTree, IndexList, outFile);
         Console.WriteLine("NotParentContain done.");
     }
     private static string FileNameConvert(string s, int i)
@@ -85,14 +85,15 @@ public static partial class Cmds
 
 
     /// <summary>
-    /// 遍历潜在非父包含节点集，如某节点不为非父包含，则递归该节点子节点判断是否为非父包含。
+    /// 遍历潜在非父包含节点集，如某节点不为非父包含，则递归该节点子节点(排除叶子节点)判断是否为非父包含。
     /// 
-    /// 判断某节点是否为非父包含：
+    /// 判断某潜在节点是否为非父包含：
     ///     首先，找出该节点所有Hash；
     ///         每个Hash在HashParents中找到Parents集合；
     ///     计算每个Hash的Parents并集；
     ///     并减去该节点到根的中途节点；
     ///     最后如非空则得到1个非父包含。
+    ///     排序，如列表非空则循环输出列表首节点并删除其所有父至根节点。
     /// </summary>
     /// <param name="hashParents"></param>
     /// <param name="mostTopAtleast2"></param>
@@ -106,7 +107,7 @@ public static partial class Cmds
         List<int> mostTopAtleast2,
         List<StartCountRec> startCountList,
         List<HashFileNameRec> hashFileNameList,
-        List<ImmutableTreeNode> immuTreeList,
+        List<ListTreeNode> immuTreeList,
         List<int> hashFileNameListToImmuListIndexList,
         FileInfo outFile)
     {
@@ -116,7 +117,7 @@ public static partial class Cmds
         Parallel.ForEach(mostTopAtleast2, (mostTopNode) =>
         {
             //判断一个潜在的非父包含节点
-
+            var NotParentContainList = RecursionNotParentContainNode(mostTopNode, hashParents, startCountList, immuTreeList);
             lock (progressBar)
             {
                 progressBar.Tick();
@@ -124,19 +125,68 @@ public static partial class Cmds
         });
 
     }
-
-    /// <summary>
-    /// 输出一个节点的全部非父包含
-    /// </summary>
-    /// <param name="node"></param>
-    /// <param name="hashParents"></param>
-    /// <param name="immuTreeList"></param>
-    private static List<int> NotParentContainNode(
+    private static List<(int, List<int>)> RecursionNotParentContainNode(
         int node,
         List<HashParents> hashParents,
-        List<ImmutableTreeNode> immuTreeList)
+        List<StartCountRec> startCountList,
+        List<ListTreeNode> immuTreeList
+        )
     {
+        //排除叶子节点
+        if (immuTreeList[node].Childs == null)
+        {
+            return new List<(int, List<int>)>(0);
+        }
+
+        //当前节点
+        var NotParentContainList = NotParentContainNode(node, startCountList, hashParents, immuTreeList);
+        if (NotParentContainList.Count > 0)
+        {
+            return new List<(int, List<int>)>() { (node, NotParentContainList) };
+        }
+
+        //递归子节点
+        var Result = new List<(int, List<int>)>();
+        foreach (var item in immuTreeList[node].Childs)
+        {
+            Result.AddRange(RecursionNotParentContainNode(item.Value, hashParents, startCountList, immuTreeList));
+        }
+        return Result;
+    }
+
+    /// <summary>
+    /// 判断某潜在节点是否为非父包含：
+    ///     首先，找出该节点所有Hash；
+    ///         每个Hash在HashParents中找到Parents集合；
+    ///     计算每个Hash的Parents并集；
+    ///     并减去该节点到根的中途节点；
+    ///     最后如非空则得到1个非父包含。
+    ///     排序，如列表非空则循环输出列表首节点并删除其所有父至根节点。
+    /// </summary>
+    /// <param name="node"></param>
+    /// <param name="startCountList"></param>
+    /// <param name="hashParents"></param>
+    /// <param name="listTree"></param>
+    /// <returns>如List.Count为0则非非父包含</returns>
+    private static List<int> NotParentContainNode(
+        int node,
+        List<StartCountRec> startCountList,
+        List<HashParents> hashParents,
+        List<ListTreeNode> listTree)
+    {
+        var ResultSet = new List<int>();
+        //var Hashs = listTree[node].AtLeast2StartCountIdxList.Select(i ==> startCountList[i])
+        var Hashs = from Idx in listTree[node].HashParentIdxList select hashParents[Idx].ParentIdxList;
+        foreach (var Hash in Hashs) ResultSet.SetUnion(Hash);
+        var NodeToRootList = NodeToRoot(node, listTree);
+        ResultSet.SetSub(NodeToRootList);
+
         var Result = new List<int>();
+        while (ResultSet.Count > 0)
+        {
+            Result.Add(ResultSet[0]);
+            ResultSet.SetSub(NodeToRoot(ResultSet[0], listTree));
+        }
         return Result;
     }
 
@@ -144,7 +194,7 @@ public static partial class Cmds
         List<SameHashAtleast2ImmuGroup> groupList,
         List<StartCountRec> startCountList,
         List<HashFileNameRec> hashFileNameList,
-        List<ImmutableTreeNode> immuTreeList,
+        List<ListTreeNode> immuTreeList,
         List<int> indexList,
         FileInfo outFile)
     {
