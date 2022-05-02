@@ -2,7 +2,7 @@
   "profiles": {
     "FilesContain": {
       "commandName": "Project",
-      "commandLineArgs": " -i \"C:\\MustDel\\bdisk-filenames.md5.txt\" \"C:\\MustDel\\bdisk-filenames.md5.txt\""
+      "commandLineArgs": "fc -i \"C:\\candel\\20220502\\test.sha256.txt\"  -o \"C:\\candel\\20220502\\o.txt\""
     }
   }
 }

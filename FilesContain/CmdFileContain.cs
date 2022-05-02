@@ -1,5 +1,4 @@
 ﻿
-using System.Collections.Generic;
 using ShellProgressBar;
 
 namespace CmdsNameSpace;
@@ -14,28 +13,27 @@ public static partial class Cmds
     ///     3、由List<HashFileNameRec>构造DictTree。
     ///     4、由DictTree转换为可多线程查询的ImmuTreeList。
     ///     5、构建HashParents。每个对应文件名数量大于等于2的Hash，都有一个所有文件名的父节点集合。
-    ///     6、构造潜在非父包含节点集--最上层Atleast2节点集(除根)，
+    ///     6、构造潜在非父包含节点集--最上层纯2节点集(除根)，
     ///         每个节点仅由Hash数量最少为2的叶子节点自下而上构成，
     ///         且其中无一节点为另一节点的父节点。
     ///         
-    ///     (将删除)6、从ImmuTree一级子节点开始，如某节点包含的Hash全在Atleast2List中，则记录下该节点(加到潜在节点集中)；
-    ///         否则对子节点递归，递归函数有一布尔值记录父节点与子节点Hash数目是否相同，如相同直接递归到再下级子节点；
-    ///         最后，得到一个潜在非父包含节点集，其中无一节点为另一节点的父节点。
-    ///     7、遍历潜在非父包含节点集，按步骤7.1方法判断是否为非父包含。
+    ///         纯2节点定义：如某节点为叶子节点，则其相同Hash数量最少为2；如某节点非叶子节点，则其子节点均为纯2节点。
+    ///         非2节点定义：不是纯2节点。如某节点为叶子节点，则其相同Hash数量为1；如某节点非叶子节点，则其子节点至少含有1个非2节点。
+    /// 
+    ///     7、遍历最上层纯2节点集，按步骤7.1方法判断是否为非父包含。
     ///         如某节点不为非父包含，则递归该节点子节点判断是否为非父包含。
     ///         
-    ///     7.1、判断某节点是否为非父包含。
+    ///     7.1、判断某纯2节点是否为非父包含。
     ///             首先，找出该节点所有Hash；
     ///                 每个Hash在HashParents中找到Parents集合；
-    ///             计算每个Hash的Parents并集；
+    ///             计算所有Hash的Parents交集；
     ///             并减去该节点到根的中途节点；
-    ///             最后如非空则得到1个非父包含。
-    ///         
+    ///             最后如非空则得到对该纯2节点的非父包含集，但此集合内元素可能有父子关系。
+    ///             如非父包含集非空，则循环输出列表首节点、并删除其父节点至根节点。
     /// </summary>
-    /// <param name="inHashFiles"></param>
-    /// <param name="outFile"></param>
-    /// <param name="config"></param>
-    public static async void CmdFileContain(List<FileInfo> inHashFiles, FileInfo outFile, FileInfo config)
+    /// <param name="inHashFiles">输入HashFile列表</param>
+    /// <param name="outFile">输出File</param>
+    public static void CmdFileContain(List<FileInfo> inHashFiles, FileInfo outFile)
     {
         Console.WriteLine($"CmdFileContain, output file {outFile.FullName}");
         List<HashFileNameRec> HashFileNameList = new List<HashFileNameRec>();
@@ -59,23 +57,31 @@ public static partial class Cmds
         var StartCountList = MakeStartCountList(HashFileNameList);
         Console.WriteLine($"MakeStartCountList done. count={StartCountList.Count}");
 
-        //var DictTree = DictTreeFromHashFileNameList(HashFileNameList);
         var DictTree = DictTreeFromStartCountList(StartCountList, HashFileNameList);
         Console.WriteLine("DictTree done.");
 
         var (ListTree, IndexList) = DictTreeToListTree(DictTree, HashFileNameList, StartCountList).Result;
-        Console.WriteLine($"DictTreeToImmutableTree done. count={ListTree.Count}");
+        Console.WriteLine($"DictTreeToListTree done. count={ListTree.Count}");
 
         var HashParents = MakeHashParents(StartCountList, ListTree, IndexList);
-        var MostTopAtleast2 = MakeMostTopAtleast2(HashParents, StartCountList, ListTree, IndexList).Result;
+        Console.WriteLine($"MakeHashParents done. count={HashParents.Count}");
 
-        //var ImmuGroupList = MakeImmuGroup(ImmuTreeList, StartCountList, IndexList);
-        //Console.WriteLine($"MakeImmuGroup done. count={ImmuGroupList.Count}");
+        var MostTopPure2 = MakeMostTopPure2(HashParents, StartCountList, ListTree, IndexList).Result;
+        Console.WriteLine($"MakeMostTopPure2 done. count={MostTopPure2.Count}");
 
         Console.WriteLine("NotParentContain begin...");
-        NotParentContain(HashParents, MostTopAtleast2, StartCountList, HashFileNameList, ListTree, IndexList, outFile);
+        NotParentContain(HashParents, MostTopPure2, StartCountList, HashFileNameList, ListTree, IndexList, outFile);
         Console.WriteLine("NotParentContain done.");
     }
+
+    /// <summary>
+    /// 输入文件一行转换为HashFileNameRec时使用的文件名转换函数，
+    /// 如文件名形如"./a/b/c"，把最前面的"."去掉；
+    /// 把文件名按输入文件序号加上前缀序号，把第1个输入文件中某行文件名"/a/b/c"转换为"/1/a/b/c"，把第2个输入文件中某行文件名"/a/b/c"转换为"/2/a/b/c"。
+    /// </summary>
+    /// <param name="s"></param>
+    /// <param name="i"></param>
+    /// <returns></returns>
     private static string FileNameConvert(string s, int i)
     {
         if ('.' == s[0]) s = s.Substring(1);
@@ -85,83 +91,112 @@ public static partial class Cmds
 
 
     /// <summary>
-    /// 遍历潜在非父包含节点集，如某节点不为非父包含，则递归该节点子节点(排除叶子节点)判断是否为非父包含。
+    /// 遍历最上层纯2节点集，如某节点不为非父包含，则递归该节点子节点(排除叶子节点)判断是否为非父包含。
     /// 
     /// 判断某潜在节点是否为非父包含：
     ///     首先，找出该节点所有Hash；
     ///         每个Hash在HashParents中找到Parents集合；
-    ///     计算每个Hash的Parents并集；
+    ///     计算所有Hash的Parents交集；
     ///     并减去该节点到根的中途节点；
-    ///     最后如非空则得到1个非父包含。
-    ///     排序，如列表非空则循环输出列表首节点并删除其所有父至根节点。
+    ///     最后如非空则得到对该纯2节点的非父包含集，但此集合内元素可能有父子关系。
+    ///     如非父包含集非空，则循环输出列表首节点、并删除其父节点至根节点。
     /// </summary>
     /// <param name="hashParents"></param>
-    /// <param name="mostTopAtleast2"></param>
+    /// <param name="mostTopPure2List"></param>
     /// <param name="startCountList"></param>
     /// <param name="hashFileNameList"></param>
-    /// <param name="immuTreeList"></param>
-    /// <param name="hashFileNameListToImmuListIndexList"></param>
+    /// <param name="listTree"></param>
+    /// <param name="hashFileNameListToListTreeIdxList"></param>
     /// <param name="outFile"></param>
     private static void NotParentContain(
         List<HashParents> hashParents,
-        List<int> mostTopAtleast2,
+        List<int> mostTopPure2List,
         List<StartCountRec> startCountList,
         List<HashFileNameRec> hashFileNameList,
-        List<ListTreeNode> immuTreeList,
-        List<int> hashFileNameListToImmuListIndexList,
+        List<ListTreeNode> listTree,
+        List<int> hashFileNameListToListTreeIdxList,
         FileInfo outFile)
     {
         using var OutWriter = File.CreateText(outFile.FullName);
-
-        using ProgressBar progressBar = new ProgressBar(mostTopAtleast2.Count, "NotParentContain progress");
-        Parallel.ForEach(mostTopAtleast2, (mostTopNode) =>
+        using ProgressBar progressBar = new ProgressBar(mostTopPure2List.Count, "NotParentContain progress");
+        Parallel.ForEach(mostTopPure2List, (mostTopPure2Node) =>
         {
-            //判断一个潜在的非父包含节点
-            var NotParentContainList = RecursionNotParentContainNode(mostTopNode, hashParents, startCountList, immuTreeList);
+            //返回某纯2节点的最顶非父包含列表
+            var NotParentContainList = RecursionMostTopNotParentContainNode(mostTopPure2Node, hashParents, startCountList, listTree);
+            lock(OutWriter)
+            {
+                foreach (var nodeitem in NotParentContainList)
+                {
+                    OutWriter.WriteLine(listTree[nodeitem.node].PathFromRoot);
+                    foreach (var listitem in nodeitem.list)
+                    {
+                        OutWriter.WriteLine("  " + listTree[listitem].PathFromRoot);
+                    }
+                }
+            }
             lock (progressBar)
             {
                 progressBar.Tick();
             }
         });
-
     }
-    private static List<(int, List<int>)> RecursionNotParentContainNode(
+
+    /// <summary>
+    /// 递归调用，返回某纯2节点的最顶非父包含列表。
+    /// 列表元素为元组(节点，非父包含集)。
+    /// 
+    /// 叶子节点返回空列表。
+    /// if(某非叶子纯2节点为非父包含)
+    /// {返回单元素列表，元素为元组(纯2节点，非父包含集)；}
+    /// else
+    /// {返回所有子节点的最顶非父包含列表的合并}
+    /// 
+    /// </summary>
+    /// <param name="node"></param>
+    /// <param name="hashParents"></param>
+    /// <param name="startCountList"></param>
+    /// <param name="listTree"></param>
+    /// <returns></returns>
+    private static List<(int node, List<int> list)> RecursionMostTopNotParentContainNode(
         int node,
         List<HashParents> hashParents,
         List<StartCountRec> startCountList,
-        List<ListTreeNode> immuTreeList
+        List<ListTreeNode> listTree
         )
     {
-        //排除叶子节点
-        if (immuTreeList[node].Childs == null)
+        if (null == listTree[node].Childs)
         {
+            //叶子节点返回空列表
             return new List<(int, List<int>)>(0);
         }
 
-        //当前节点
-        var NotParentContainList = NotParentContainNode(node, startCountList, hashParents, immuTreeList);
+        var NotParentContainList = NotParentContainNode(node, startCountList, hashParents, listTree);
         if (NotParentContainList.Count > 0)
         {
+            //非叶子纯2节点为非父包含
+            //返回单元素列表
             return new List<(int, List<int>)>() { (node, NotParentContainList) };
         }
 
+        //返回所有子节点的最顶非父包含列表的合并
         //递归子节点
         var Result = new List<(int, List<int>)>();
-        foreach (var item in immuTreeList[node].Childs)
+        foreach (var item in listTree[node].Childs.EmptyIfNull())
         {
-            Result.AddRange(RecursionNotParentContainNode(item.Value, hashParents, startCountList, immuTreeList));
+            Result.AddRange(RecursionMostTopNotParentContainNode(item.Value, hashParents, startCountList, listTree));
         }
         return Result;
     }
 
     /// <summary>
-    /// 判断某潜在节点是否为非父包含：
+    /// 判断某纯2节点是否为非父包含：
     ///     首先，找出该节点所有Hash；
     ///         每个Hash在HashParents中找到Parents集合；
-    ///     计算每个Hash的Parents并集；
+    ///     计算所有Hash的Parents交集；
     ///     并减去该节点到根的中途节点；
-    ///     最后如非空则得到1个非父包含。
-    ///     排序，如列表非空则循环输出列表首节点并删除其所有父至根节点。
+    ///     最后如非空则得到对该纯2节点的非父包含集，但此集合内元素可能有父子关系。
+    ///     如非父包含集非空，则循环输出列表首节点、并删除其父节点至根节点。
+    /// 
     /// </summary>
     /// <param name="node"></param>
     /// <param name="startCountList"></param>
@@ -174,18 +209,28 @@ public static partial class Cmds
         List<HashParents> hashParents,
         List<ListTreeNode> listTree)
     {
-        var ResultSet = new List<int>();
+        var NotParentContainSet = new List<int>(0);
         //var Hashs = listTree[node].AtLeast2StartCountIdxList.Select(i ==> startCountList[i])
-        var Hashs = from Idx in listTree[node].HashParentIdxList select hashParents[Idx].ParentIdxList;
-        foreach (var Hash in Hashs) ResultSet.SetUnion(Hash);
+        var HashsParents = from Idx in listTree[node].HashParentIdxList select hashParents[Idx].ParentIdxList;
+        bool IsFirst = true;
+        foreach (var Hash in HashsParents)
+        {
+            if (IsFirst)
+            {
+                IsFirst = false;
+                NotParentContainSet = Hash;
+            }
+            else
+                NotParentContainSet = NotParentContainSet.SetIntersect(Hash);
+        }
         var NodeToRootList = NodeToRoot(node, listTree);
-        ResultSet.SetSub(NodeToRootList);
+        NotParentContainSet = NotParentContainSet.SetSub(NodeToRootList);
 
         var Result = new List<int>();
-        while (ResultSet.Count > 0)
+        while (NotParentContainSet.Count > 0)
         {
-            Result.Add(ResultSet[0]);
-            ResultSet.SetSub(NodeToRoot(ResultSet[0], listTree));
+            Result.Add(NotParentContainSet[0]);
+            NotParentContainSet=NotParentContainSet.SetSub(NodeToRoot(NotParentContainSet[0], listTree));
         }
         return Result;
     }
