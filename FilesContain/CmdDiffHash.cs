@@ -25,5 +25,14 @@ public static partial class Cmds
 
     }
 
+    //Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.EvaluateAsync
+    //https://www.nuget.org/packages/Microsoft.CodeAnalysis.CSharp.Scripting/
+    //https://itnext.io/getting-start-with-roslyn-c-scripting-api-d2ea10338d2b
 
+    //https://riptutorial.com/roslyn-scripting/learn/100006/evaluate-a-script-with-parameters
+    //var result = await CSharpScript.EvaluateAsync<int>("X*2 + Y*2", globals: point);
+
+    //var discountFilter = "album => album.Quantity > 0";
+    //var options = ScriptOptions.Default.AddReferences(typeof(Album).Assembly);
+    //Func<Album, bool> discountFilterExpression = await CSharpScript.EvaluateAsync<Func<Album, bool>>(discountFilter, options);
 }

@@ -2,7 +2,7 @@
   "profiles": {
     "FilesContain": {
       "commandName": "Project",
-      "commandLineArgs": "fc -i \"C:\\candel\\20220502\\test.sha256.txt\"  -o \"C:\\candel\\20220502\\o.txt\""
+      "commandLineArgs": "fc -i \"C:\\MustDel\\DataAfter20190423Lock.md5.txt\" -i \"C:\\MustDel\\DataLock.md5.txt\" -i \"C:\\MustDel\\bdisk-filenames.md5.txt\" -i \"C:\\MustDel\\DataInCosmos20200404Lock.md5.txt\" -i \"C:\\MustDel\\DataNoWriteSeal20100503.md5.txt\"  -o \"C:\\MustDel\\o.txt\""
     }
   }
 }

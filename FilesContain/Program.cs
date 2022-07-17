@@ -48,7 +48,7 @@ var rootCommand = new RootCommand(longSynopsisText)
                 ()=>new FileInfo(Path.Join(CurrentDirectory,"files_name_output.txt")),
                 "output file name"
             ).LegalFileNamesOnly(),
-        }.SetAlias("gfn").SetHandler(CommandHandler.Create(Cmds.CmdGenFilesName)),
+        }.MySetAlias("gfn").MySetHandler(CommandHandler.Create(Cmds.CmdGenFilesName)),
 
         new Command("cmpfilesname", "compare two files name list from same folder")
         {
@@ -62,7 +62,7 @@ var rootCommand = new RootCommand(longSynopsisText)
                 new string[] { "--folder-to", "-t" },
                 "folder to"
             ).ExistingOnly(),
-        }.SetAlias("cfn").SetHandler(CommandHandler.Create(Cmds.CmdCmpFilesName)),
+        }.MySetAlias("cfn").MySetHandler(CommandHandler.Create(Cmds.CmdCmpFilesName)),
 
         new Command("md5filesname", "gen md5 from files name")
         {
@@ -77,7 +77,7 @@ var rootCommand = new RootCommand(longSynopsisText)
                 ()=>new FileInfo(Path.Join(CurrentDirectory,"files_name_output.txt")),
                 "output file name"
             ).LegalFileNamesOnly(),
-        }.SetAlias("md5").SetHandler(CommandHandler.Create(Cmds.CmdMd5FilesName)),
+        }.MySetAlias("md5").MySetHandler(CommandHandler.Create(Cmds.CmdMd5FilesName)),
 
         new Command("grouphash", "group file hash")
         {
@@ -92,7 +92,7 @@ var rootCommand = new RootCommand(longSynopsisText)
                 ()=>new FileInfo(Path.Join(CurrentDirectory,"group_hash_output.txt")),
                 "output file name"
             ).LegalFileNamesOnly(),
-        }.SetAlias("gh").SetHandler(CommandHandler.Create(Cmds.CmdGroupHash)),
+        }.MySetAlias("gh").MySetHandler(CommandHandler.Create(Cmds.CmdGroupHash)),
 
         new Command("diffhash", "diff two hash list")
         {
@@ -112,7 +112,7 @@ var rootCommand = new RootCommand(longSynopsisText)
                 ()=>new FileInfo(Path.Join(CurrentDirectory,"diffhash_out.txt")),
                 "output file name"
             ),
-        }.SetAlias("dh").SetHandler(CommandHandler.Create(Cmds.CmdDiffHash)),
+        }.MySetAlias("dh").MySetHandler(CommandHandler.Create(Cmds.CmdDiffHash)),
 
         new Command("filecontain", "file contain")
         {
@@ -127,9 +127,9 @@ var rootCommand = new RootCommand(longSynopsisText)
                 ()=>new FileInfo(Path.Join(CurrentDirectory,"filecontain.txt")),
                 "output file name"
             ),
-        }.SetAlias("fc").SetHandler(CommandHandler.Create(Cmds.CmdFileContain)),
+        }.MySetAlias("fc").MySetHandler(CommandHandler.Create(Cmds.CmdFileContain)),
 
-    }.SetHandler(CommandHandler.Create(Cmds.CmdRootRun));
+    }.MySetHandler(CommandHandler.Create(Cmds.CmdRootRun));
 
 
 var GlobalOption = new Option<FileInfo>(
