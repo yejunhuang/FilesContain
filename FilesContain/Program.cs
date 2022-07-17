@@ -50,20 +50,6 @@ var rootCommand = new RootCommand(longSynopsisText)
             ).LegalFileNamesOnly(),
         }.MySetAlias("gfn").MySetHandler(CommandHandler.Create(Cmds.CmdGenFilesName)),
 
-        new Command("cmpfilesname", "compare two files name list from same folder")
-        {
-            new Option<FileInfo>
-            (
-                new string[] {"--folder-from","-f" },
-                "folder from"
-            ).ExistingOnly(),
-            new Option<FileInfo>
-            (
-                new string[] { "--folder-to", "-t" },
-                "folder to"
-            ).ExistingOnly(),
-        }.MySetAlias("cfn").MySetHandler(CommandHandler.Create(Cmds.CmdCmpFilesName)),
-
         new Command("md5filesname", "gen md5 from files name")
         {
             new Option<FileInfo>
@@ -79,40 +65,19 @@ var rootCommand = new RootCommand(longSynopsisText)
             ).LegalFileNamesOnly(),
         }.MySetAlias("md5").MySetHandler(CommandHandler.Create(Cmds.CmdMd5FilesName)),
 
-        new Command("grouphash", "group file hash")
-        {
-            new Option<FileInfo[]>
-            (
-                new string[] {"--in-hash-files","-i" },
-                "input hash(md5) files"
-            ).ExistingOnly(),
-            new Option<FileInfo>
-            (
-                new string[] { "--out-file", "-o" },
-                ()=>new FileInfo(Path.Join(CurrentDirectory,"group_hash_output.txt")),
-                "output file name"
-            ).LegalFileNamesOnly(),
-        }.MySetAlias("gh").MySetHandler(CommandHandler.Create(Cmds.CmdGroupHash)),
-
-        new Command("diffhash", "diff two hash list")
+        new Command("cmpfilesname", "compare two files name list from same folder")
         {
             new Option<FileInfo>
             (
-                new string[] {"--minuend","-m" },
-                "minuend hash(md5) file"
+                new string[] {"--folder-from","-f" },
+                "folder from"
             ).ExistingOnly(),
             new Option<FileInfo>
             (
-                new string[] {"--subtrahend","-s" },
-                "subtrahend hash(md5) file"
+                new string[] { "--folder-to", "-t" },
+                "folder to"
             ).ExistingOnly(),
-            new Option<FileInfo>
-            (
-                new string[] { "--out-file", "-o" },
-                ()=>new FileInfo(Path.Join(CurrentDirectory,"diffhash_out.txt")),
-                "output file name"
-            ),
-        }.MySetAlias("dh").MySetHandler(CommandHandler.Create(Cmds.CmdDiffHash)),
+        }.MySetAlias("cfn").MySetHandler(CommandHandler.Create(Cmds.CmdCmpFilesName)),
 
         new Command("filecontain", "file contain")
         {
