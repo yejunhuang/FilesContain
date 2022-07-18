@@ -879,8 +879,10 @@ public static partial class Cmds
     /// <param name="one"></param>
     /// <param name="two"></param>
     /// <returns></returns>
-    private static List<T> SetIntersect<T>(this List<T> one, List<T> two)
+    private static List<T> SetIntersect<T>(this List<T> one, List<T> two, Comparer<T>? comparer = null)
     {
+        var comparison = (comparer ?? Comparer<T>.Default).Compare;
+
         var R = new List<T>();
         int OneIndex = 0;
         int TwoIndex = 0;
@@ -889,12 +891,12 @@ public static partial class Cmds
             var OneValue = one[OneIndex];
             var TwoValue = two[TwoIndex];
             //默认升序排序
-            if (Comparer<T>.Default.Compare(OneValue, TwoValue) > 0)
+            if (comparison(OneValue, TwoValue) > 0)
             {
                 //two前进
                 TwoIndex++;
             }
-            else if (Comparer<T>.Default.Compare(TwoValue, OneValue) > 0)
+            else if (comparison(TwoValue, OneValue) > 0)
             {
                 //one前进
                 OneIndex++;
@@ -965,7 +967,7 @@ public static partial class Cmds
     /// <param name="subtrahend"></param>
     /// <returns></returns>
     /// <exception cref="NotImplementedException"></exception>
-    public static List<T> SetQuickSub<T>(this List<T> minuend, List<T> subtrahend)
+    public static List<T> SetQuickSub<T>(this List<T> minuend, List<T> subtrahend, Comparer<T>? comparer = null)
     {
         int MinIndex = 0;
         int SubIndex = 0;
@@ -975,23 +977,29 @@ public static partial class Cmds
             //var MinValue = minuend[MinIndex];
             var SubValue = subtrahend[SubIndex];
 
-            var i = minuend.BinarySearch(MinIndex, minuend.Count - MinIndex, SubValue, Comparer<T>.Default);
+            var i = minuend.BinarySearch(MinIndex, minuend.Count - MinIndex, SubValue, comparer ?? Comparer<T>.Default);
             if (i >= 0)
             {
                 //找到的位置，把列表分为左右两部分
                 //R.AddRange(minuend.GetRange(MinIndex, i - MinIndex));
-                R.AddRange(minuend.EnumRange(MinIndex, i - MinIndex));
+                R.AddRange(minuend.EnumRange(MinIndex, i - MinIndex)); //i - MinIndex == 0时，为空
                 MinIndex = i + 1;
                 SubIndex++;
             }
             else
-                break; //没找到，剩下的subtrahend也不用找了
+            {
+                //没找到，~i为下一个大于SubValue的元素的位置，如没有更大元素则~i为要查找队列的后一位。
+                R.AddRange(minuend.EnumRange(MinIndex, ~i - MinIndex));
+                MinIndex = ~i;
+                //当前SubValue处理完，移到下一个SubIndex
+                SubIndex++;
+            }
 
         }
+        //minuend已找完，或者，subtrahend已找完
         if (MinIndex < minuend.Count)
         {
-            //两种情况，一、subtrahend已找完且minuend还有；二、某个SubValue没找到且minuend还有
-            //R.AddRange(minuend.GetRange(MinIndex, minuend.Count-MinIndex));
+            //minuend未找完，且subtrahend已找完
             R.AddRange(minuend.EnumRange(MinIndex, minuend.Count - MinIndex));
         }
 

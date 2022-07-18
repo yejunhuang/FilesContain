@@ -2,7 +2,7 @@
   "profiles": {
     "FilesContain": {
       "commandName": "Project",
-      "commandLineArgs": "fc -i \"C:\\MustDel\\DataAfter20190423Lock.md5.txt\" -i \"C:\\MustDel\\DataLock.md5.txt\" -i \"C:\\MustDel\\bdisk-filenames.md5.txt\" -i \"C:\\MustDel\\DataInCosmos20200404Lock.md5.txt\" -i \"C:\\MustDel\\DataNoWriteSeal20100503.md5.txt\"  -o \"C:\\MustDel\\o.txt\""
+      "commandLineArgs": "cmpfilesname --hash-file-from \"C:\\MustDel\\DataLock.md5.txt\" --filter-from \"/\" --hash-file-to \"C:\\MustDel\\bdisk-filenames.md5.txt\" --filter-to \"/imac_backup_20181211/\" -o \"C:\\MustDel\\Compare-DataLock-imac_backup_20181211.output-2.txt\""
     }
   }
 }

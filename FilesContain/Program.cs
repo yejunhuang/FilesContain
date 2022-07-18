@@ -69,14 +69,34 @@ var rootCommand = new RootCommand(longSynopsisText)
         {
             new Option<FileInfo>
             (
-                new string[] {"--folder-from","-f" },
-                "folder from"
+                new string[] {"--hash-file-from","-f" },
+                "hash file from"
             ).ExistingOnly(),
+
+            new Option<string>
+            (
+                new string[] {"--filter-from"},
+                "filter from"
+            ),
+
             new Option<FileInfo>
             (
-                new string[] { "--folder-to", "-t" },
-                "folder to"
+                new string[] {"--hash-file-to","-t" },
+                "hash file to"
             ).ExistingOnly(),
+
+            new Option<string>
+            (
+                new string[] {"--filter-to"},
+                "filter to"
+            ),
+
+            new Option<FileInfo>
+            (
+                new string[] { "--out-file", "-o" },
+                ()=>new FileInfo(Path.Join(CurrentDirectory,"filecontain.txt")),
+                "output file name"
+            ),
         }.MySetAlias("cfn").MySetHandler(CommandHandler.Create(Cmds.CmdCmpFilesName)),
 
         new Command("filecontain", "file contain")
